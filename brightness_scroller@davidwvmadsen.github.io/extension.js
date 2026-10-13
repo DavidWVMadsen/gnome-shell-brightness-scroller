@@ -84,6 +84,8 @@ export default class BrightnessScrollerExtension extends Extension {
     this.settings = null;
     this.panel = null;
     this._proxy = null;
+    this._diagLogged = false;
+    this._smooth_acc = 0;
     console.log(`${TAG} disable()`);
   }
 
@@ -96,7 +98,10 @@ export default class BrightnessScrollerExtension extends Extension {
   _get_brightness() {
     if (this._useManager) {
       const scale = this._scale;
-      if (!scale) console.warn(`${TAG} no Main.brightnessManager.globalScale (no backlight-capable monitor?)`);
+      if (!scale) {
+        console.warn(`${TAG} no Main.brightnessManager.globalScale (no backlight-capable monitor?)`);
+        this._log_diagnostics();
+      }
       return scale ? scale.value : null;
     }
     if (!this._proxy) {
@@ -109,6 +114,27 @@ export default class BrightnessScrollerExtension extends Extension {
       return null;
     }
     return b / 100;
+  }
+
+  // Logged once per enable(): helps tell an API mismatch apart from "Mutter found no backlight".
+  _log_diagnostics() {
+    if (this._diagLogged) return;
+    this._diagLogged = true;
+    try {
+      const bm = Main.brightnessManager;
+      const proto = Object.getPrototypeOf(bm);
+      console.warn(`${TAG} brightnessManager own props: ${Object.getOwnPropertyNames(bm).join(", ")}`);
+      console.warn(`${TAG} brightnessManager prototype props: ${Object.getOwnPropertyNames(proto).join(", ")}`);
+      console.warn(`${TAG} scales.length=${bm.scales?.length}, globalScale=${bm.globalScale}`);
+      const mm = global.backend.get_monitor_manager();
+      for (const lm of mm.get_logical_monitors()) {
+        for (const m of lm.get_monitors()) {
+          console.warn(`${TAG} monitor ${m.get_display_name?.() ?? m.get_connector?.()}: connector=${m.get_connector?.()}, active=${m.is_active?.()}, backlight=${m.get_backlight?.()}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`${TAG} diagnostics failed: ${e}`);
+    }
   }
 
   _set_brightness(value) {
@@ -128,20 +154,33 @@ export default class BrightnessScrollerExtension extends Extension {
       return Clutter.EVENT_PROPAGATE;
     }
 
+    // +1 = up, -1 = down. Smooth scroll events (touchpads, hi-res wheels; direction 4)
+    // are accumulated so one wheel notch counts as one step.
+    let dir = 0;
+    switch (event.get_scroll_direction()) {
+      case Clutter.ScrollDirection.UP:
+        dir = 1;
+        break;
+      case Clutter.ScrollDirection.DOWN:
+        dir = -1;
+        break;
+      case Clutter.ScrollDirection.SMOOTH: {
+        const [, dy] = event.get_scroll_delta();
+        this._smooth_acc = (this._smooth_acc ?? 0) - dy;
+        if (Math.abs(this._smooth_acc) < 1) return Clutter.EVENT_STOP;
+        dir = Math.sign(this._smooth_acc);
+        this._smooth_acc = 0;
+        break;
+      }
+      default:
+        return Clutter.EVENT_PROPAGATE;
+    }
+
     let value = this._get_brightness();
     if (value === null) return Clutter.EVENT_PROPAGATE;
 
     const multiplier = this.direction ? -1 : 1;
-    switch (event.get_scroll_direction()) {
-      case Clutter.ScrollDirection.UP:
-        value += this.granularity * multiplier;
-        break;
-      case Clutter.ScrollDirection.DOWN:
-        value -= this.granularity * multiplier;
-        break;
-      default:
-        return Clutter.EVENT_PROPAGATE;
-    }
+    value += dir * this.granularity * multiplier;
 
     value = Math.clamp(value, this.min_brightness, 1);
     console.log(`${TAG} scroll -> brightness ${Math.round(value * 100)}%`);
