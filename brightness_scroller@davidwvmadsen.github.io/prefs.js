@@ -22,7 +22,7 @@ export default class BrightnessScrollerExtensionPreferences extends ExtensionPre
     // Allow very low brightness switch
     const lowBrightnessRow = new Adw.ActionRow({
       title: 'Allow brightness down to 1%',
-      subtitle: 'By default the minimum is 5%. Very low brightness can make the screen hard to see and navigate.',
+      subtitle: 'By default the minimum is 5%. Very low brightness can make the screen hard to see and navigate (the top bar stays bright so you can scroll back up).',
     });
     const lowBrightnessSwitch = new Gtk.Switch({
       active: window._settings.get_boolean('allow-low-brightness'),

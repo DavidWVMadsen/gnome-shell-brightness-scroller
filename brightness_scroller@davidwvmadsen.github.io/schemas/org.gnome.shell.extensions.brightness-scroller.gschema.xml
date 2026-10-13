@@ -15,7 +15,13 @@
     <key name="allow-low-brightness" type="b">
       <default>false</default>
       <summary>Allow brightness down to 1%</summary>
-      <description>By default scrolling will not lower brightness below 5%. If enabled, the minimum is 1%.</description>
+      <description>By default the dimming overlay will not lower brightness below 5%. If enabled, the minimum is 1%.</description>
+    </key>
+    <key name="dim-level" type="d">
+      <range min="0.01" max="1.0" />
+      <default>1.0</default>
+      <summary>Current brightness level</summary>
+      <description>Software brightness level (1.0 = no dimming). Persisted so it survives re-login and lock.</description>
     </key>
     <key name="modifier-key" type="s">
       <choices>

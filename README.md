@@ -4,7 +4,9 @@ Use the mouse wheel on the GNOME Top Bar to increase or decrease screen brightne
 
 Settings: step granularity (default 5%), invert scroll direction, an optional required modifier key (Ctrl/Alt/Shift/Super), and a minimum-brightness floor: scrolling never goes below 5% by default, or 1% if "Allow brightness down to 1%" is enabled (very low brightness can make the screen hard to see).
 
-Brightness is controlled via `Main.brightnessManager.globalScale` on GNOME 49+ (where gnome-shell owns the backlight and shows its own brightness OSD), and on GNOME 45-48 via the `Brightness` property of gnome-settings-daemon's `org.gnome.SettingsDaemon.Power.Screen` D-Bus interface. Requires a backlight-controllable display.
+This extension dims in software: it draws a black, click-through overlay on every monitor, with opacity `(1 - level)`. It does not touch the hardware backlight, so it works on any display, including external monitors, but it does not save power. The level is stored in the `dim-level` setting, so it survives re-login and lock. At 100% the overlay is hidden.
+
+The overlay sits directly below the top bar in GNOME Shell's UI stack. Windows, the overview and the lock screen are dimmed. The top bar and its menus, modal dialogs and the brightness OSD stay at full brightness, so you can always scroll back up. Popup windows of apps (for example right-click menus) may not be dimmed.
 
 ## Credit
 
@@ -34,4 +36,4 @@ gnome-extensions info brightness_scroller@davidwvmadsen.github.io   # State shou
 journalctl -f -o cat /usr/bin/gnome-shell | grep brightness-scroller
 ```
 
-The extension logs `[brightness-scroller] enable()` on load and a line for each panel scroll. The folder name must equal the UUID. On Wayland you have to log out and back in after installing.
+The extension logs `[brightness-scroller] enable()` on load. The folder name must equal the UUID. On Wayland you have to log out and back in after installing.

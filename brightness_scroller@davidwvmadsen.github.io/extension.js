@@ -1,17 +1,9 @@
 import Clutter from "gi://Clutter";
 import Gio from "gi://Gio";
+import St from "gi://St";
 import * as Main from "resource:///org/gnome/shell/ui/main.js";
 import * as Config from "resource:///org/gnome/shell/misc/config.js";
 import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
-
-const BUS_NAME = "org.gnome.SettingsDaemon.Power";
-const OBJECT_PATH = "/org/gnome/SettingsDaemon/Power";
-const SCREEN_IFACE = `<node>
-  <interface name="org.gnome.SettingsDaemon.Power.Screen">
-    <property name="Brightness" type="i" access="readwrite"/>
-  </interface>
-</node>`;
-const ScreenProxy = Gio.DBusProxy.makeProxyWrapper(SCREEN_IFACE);
 
 // Maps the "modifier-key" setting to the Clutter modifier mask(s) that must be held.
 const ModifierMasks = {
@@ -25,11 +17,20 @@ const ModifierMasks = {
 const [SHELL_MAJOR] = Config.PACKAGE_VERSION.split(".").map(Number);
 const TAG = "[brightness-scroller]";
 
+/*
+ * Software dimming: a black, non-reactive overlay per monitor whose opacity is
+ * (1 - level) * 255. It is inserted in Main.layoutManager.uiGroup directly below
+ * panelBox, so it covers windows, the overview and the lock screen, but the top
+ * bar, its menus, modal dialogs and the OSD (all stacked above panelBox) stay
+ * at full brightness and you can always scroll back up. The overlays are not
+ * registered with addChrome(), so they are not part of the input region, and
+ * reactive:false lets every click/scroll pass through.
+ */
 export default class BrightnessScrollerExtension extends Extension {
   enable() {
     this.settings = this.getSettings();
-    this.panel = Main.panel;
-    this._proxy = null;
+    this._overlays = [];
+    this._smooth_acc = 0;
 
     const setGranularity = () => {
       this.granularity = this.settings.get_int("granularity") / 100.0;
@@ -41,12 +42,15 @@ export default class BrightnessScrollerExtension extends Extension {
       this.modifier_mask = ModifierMasks[this.settings.get_string("modifier-key")] ?? 0;
     };
     const setMinimum = () => {
-      this.min_brightness = this.settings.get_boolean("allow-low-brightness") ? 0.01 : 0.05;
+      this.min_level = this.settings.get_boolean("allow-low-brightness") ? 0.01 : 0.05;
+      // Re-apply in case the floor was raised.
+      this._apply(this._get_level());
     };
-    setMinimum();
     setGranularity();
     setDirection();
     setModifier();
+    this.min_level = this.settings.get_boolean("allow-low-brightness") ? 0.01 : 0.05;
+
     this._settingsIds = [
       this.settings.connect("changed::granularity", setGranularity),
       this.settings.connect("changed::invert-scroll", setDirection),
@@ -54,108 +58,79 @@ export default class BrightnessScrollerExtension extends Extension {
       this.settings.connect("changed::allow-low-brightness", setMinimum),
     ];
 
-    // GNOME 49+: gnome-shell owns the backlight (js/misc/brightnessManager.js) and
-    // gnome-settings-daemon 49+ no longer exports Power.Screen. GNOME 45-48 use
-    // the gsd Power.Screen D-Bus "Brightness" property.
-    this._useManager = !!Main.brightnessManager;
-    console.log(`${TAG} enable(): GNOME ${Config.PACKAGE_VERSION}, backend=${this._useManager ? "Main.brightnessManager" : "gsd Power.Screen D-Bus"}, modifier=${this.settings.get_string("modifier-key")}`);
-    if (this._useManager) {
-      if (!Main.brightnessManager.globalScale)
-        console.warn(`${TAG} brightnessManager has no globalScale yet (no backlight-capable monitor detected)`);
-    } else {
-      new ScreenProxy(Gio.DBus.session, BUS_NAME, OBJECT_PATH, (proxy, error) => {
-        if (error) {
-          console.warn(`${TAG} D-Bus proxy for ${BUS_NAME} failed: ${error.message}`);
-          return;
-        }
-        if (this.settings) this._proxy = proxy;
-      });
-    }
+    this._monitorsId = Main.layoutManager.connect("monitors-changed", () => this._rebuild_overlays());
+    this._rebuild_overlays();
 
-    this.scroll_binding = this.panel.connect("scroll-event", this._handle_scroll.bind(this));
-    console.log(`${TAG} scroll handler attached to Main.panel (id ${this.scroll_binding})`);
+    this.scroll_binding = Main.panel.connect("scroll-event", this._handle_scroll.bind(this));
+    console.log(`${TAG} enable(): GNOME ${Config.PACKAGE_VERSION}, overlay dimming, level=${Math.round(this._get_level() * 100)}%`);
   }
 
   disable() {
-    if (this.panel && this.scroll_binding) this.panel.disconnect(this.scroll_binding);
+    if (this.scroll_binding) Main.panel.disconnect(this.scroll_binding);
     this.scroll_binding = null;
+    if (this._monitorsId) Main.layoutManager.disconnect(this._monitorsId);
+    this._monitorsId = null;
+    this._destroy_overlays();
+    this._overlays = null;
     this._settingsIds?.forEach((id) => this.settings.disconnect(id));
     this._settingsIds = null;
     this.settings = null;
-    this.panel = null;
-    this._proxy = null;
-    this._diagLogged = false;
-    this._smooth_acc = 0;
     console.log(`${TAG} disable()`);
   }
 
-  // Looked up on every use: the manager recreates globalScale when monitors change.
-  get _scale() {
-    return this._useManager ? (Main.brightnessManager?.globalScale ?? null) : null;
+  _get_level() {
+    return Math.clamp(this.settings.get_double("dim-level"), this.min_level, 1);
   }
 
-  // Returns current brightness as 0..1, or null if unavailable.
-  _get_brightness() {
-    if (this._useManager) {
-      const scale = this._scale;
-      if (!scale) {
-        console.warn(`${TAG} no Main.brightnessManager.globalScale (no backlight-capable monitor?)`);
-        this._log_diagnostics();
+  _destroy_overlays() {
+    for (const o of this._overlays ?? []) o.destroy();
+    this._overlays = [];
+  }
+
+  _rebuild_overlays() {
+    this._destroy_overlays();
+    const uiGroup = Main.layoutManager.uiGroup;
+    const panelBox = Main.layoutManager.panelBox;
+    for (const m of Main.layoutManager.monitors) {
+      const overlay = new St.Widget({
+        name: "brightnessScrollerOverlay",
+        style: "background-color: black;",
+        reactive: false,
+        can_focus: false,
+        track_hover: false,
+        x: m.x,
+        y: m.y,
+        width: m.width,
+        height: m.height,
+        opacity: 0,
+        visible: false,
+      });
+      if (panelBox && panelBox.get_parent() === uiGroup) {
+        uiGroup.insert_child_below(overlay, panelBox);
+      } else {
+        console.warn(`${TAG} panelBox not in uiGroup; adding overlay below top_window_group`);
+        uiGroup.insert_child_below(overlay, global.top_window_group);
       }
-      return scale ? scale.value : null;
+      this._overlays.push(overlay);
     }
-    if (!this._proxy) {
-      console.warn(`${TAG} D-Bus proxy not available`);
-      return null;
-    }
-    const b = this._proxy.Brightness;
-    if (typeof b !== "number" || b < 0) { // -1 => no backlight
-      console.warn(`${TAG} gsd reports no usable Brightness (${b})`);
-      return null;
-    }
-    return b / 100;
+    this._apply(this._get_level());
   }
 
-  // Logged once per enable(): helps tell an API mismatch apart from "Mutter found no backlight".
-  _log_diagnostics() {
-    if (this._diagLogged) return;
-    this._diagLogged = true;
-    try {
-      const bm = Main.brightnessManager;
-      const proto = Object.getPrototypeOf(bm);
-      console.warn(`${TAG} brightnessManager own props: ${Object.getOwnPropertyNames(bm).join(", ")}`);
-      console.warn(`${TAG} brightnessManager prototype props: ${Object.getOwnPropertyNames(proto).join(", ")}`);
-      console.warn(`${TAG} scales.length=${bm.scales?.length}, globalScale=${bm.globalScale}`);
-      const mm = global.backend.get_monitor_manager();
-      for (const lm of mm.get_logical_monitors()) {
-        for (const m of lm.get_monitors()) {
-          console.warn(`${TAG} monitor ${m.get_display_name?.() ?? m.get_connector?.()}: connector=${m.get_connector?.()}, active=${m.is_active?.()}, backlight=${m.get_backlight?.()}`);
-        }
-      }
-    } catch (e) {
-      console.warn(`${TAG} diagnostics failed: ${e}`);
-    }
-  }
-
-  _set_brightness(value) {
-    if (this._useManager) {
-      const scale = this._scale;
-      if (scale) scale.value = value;
-    } else if (this._proxy) {
-      // D-Bus uses integer percent; floor is 5 (or 1) to match globalScale.
-      this._proxy.Brightness = Math.clamp(Math.round(value * 100), Math.round(this.min_brightness * 100), 100);
+  _apply(level) {
+    const opacity = Math.round((1 - level) * 255);
+    for (const o of this._overlays ?? []) {
+      o.opacity = opacity;
+      o.visible = opacity > 0;
     }
   }
 
   _handle_scroll(_actor, event) {
-    console.log(`${TAG} scroll-event received (direction ${event.get_scroll_direction()}, state 0x${event.get_state().toString(16)})`);
     if (this.modifier_mask && (event.get_state() & this.modifier_mask) === 0) {
-      console.debug(`${TAG} scroll ignored: modifier not held`);
       return Clutter.EVENT_PROPAGATE;
     }
 
-    // +1 = up, -1 = down. Smooth scroll events (touchpads, hi-res wheels; direction 4)
-    // are accumulated so one wheel notch counts as one step.
+    // +1 = up, -1 = down. Smooth scroll events (touchpads, hi-res wheels) are
+    // accumulated so one wheel notch counts as one step.
     let dir = 0;
     switch (event.get_scroll_direction()) {
       case Clutter.ScrollDirection.UP:
@@ -166,7 +141,7 @@ export default class BrightnessScrollerExtension extends Extension {
         break;
       case Clutter.ScrollDirection.SMOOTH: {
         const [, dy] = event.get_scroll_delta();
-        this._smooth_acc = (this._smooth_acc ?? 0) - dy;
+        this._smooth_acc -= dy;
         if (Math.abs(this._smooth_acc) < 1) return Clutter.EVENT_STOP;
         dir = Math.sign(this._smooth_acc);
         this._smooth_acc = 0;
@@ -176,31 +151,26 @@ export default class BrightnessScrollerExtension extends Extension {
         return Clutter.EVENT_PROPAGATE;
     }
 
-    let value = this._get_brightness();
-    if (value === null) return Clutter.EVENT_PROPAGATE;
-
     const multiplier = this.direction ? -1 : 1;
-    value += dir * this.granularity * multiplier;
+    let level = this._get_level() + dir * this.granularity * multiplier;
+    level = Math.clamp(Math.round(level * 100) / 100, this.min_level, 1);
 
-    value = Math.clamp(value, this.min_brightness, 1);
-    console.log(`${TAG} scroll -> brightness ${Math.round(value * 100)}%`);
     try {
-      this._set_brightness(value);
-      // On 49+ the brightness manager shows its own per-monitor OSD when
-      // globalScale changes; showing ours too would double it.
-      if (!this._useManager) this._show_osd(value);
+      this.settings.set_double("dim-level", level);
+      this._apply(level);
+      this._show_osd(level);
     } catch (e) {
-      console.warn(`${TAG} failed to set brightness: ${e}`);
+      console.warn(`${TAG} failed to apply dim level: ${e}`);
     }
     return Clutter.EVENT_STOP;
   }
 
-  _show_osd(value) {
+  _show_osd(level) {
     const icon = Gio.Icon.new_for_string("display-brightness-symbolic");
     if (SHELL_MAJOR >= 49) {
-      Main.osdWindowManager.showAll(icon, null, value);
+      Main.osdWindowManager.showAll(icon, null, level);
     } else {
-      Main.osdWindowManager.show(-1, icon, null, value);
+      Main.osdWindowManager.show(-1, icon, null, level);
     }
   }
 }
