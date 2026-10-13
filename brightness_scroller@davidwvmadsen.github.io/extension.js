@@ -23,6 +23,7 @@ const ModifierMasks = {
 };
 
 const [SHELL_MAJOR] = Config.PACKAGE_VERSION.split(".").map(Number);
+const TAG = "[brightness-scroller]";
 
 export default class BrightnessScrollerExtension extends Extension {
   enable() {
@@ -53,13 +54,18 @@ export default class BrightnessScrollerExtension extends Extension {
       this.settings.connect("changed::allow-low-brightness", setMinimum),
     ];
 
-    // GNOME 48+: the shell owns brightness (Main.brightnessManager.globalScale).
-    // Older: gnome-settings-daemon's Power.Screen D-Bus "Brightness" property.
-    this._scale = Main.brightnessManager?.globalScale ?? null;
-    if (!this._scale) {
+    // GNOME 49+: gnome-shell owns the backlight (js/misc/brightnessManager.js) and
+    // gnome-settings-daemon 49+ no longer exports Power.Screen. GNOME 45-48 use
+    // the gsd Power.Screen D-Bus "Brightness" property.
+    this._useManager = !!Main.brightnessManager;
+    console.log(`${TAG} enable(): GNOME ${Config.PACKAGE_VERSION}, backend=${this._useManager ? "Main.brightnessManager" : "gsd Power.Screen D-Bus"}, modifier=${this.settings.get_string("modifier-key")}`);
+    if (this._useManager) {
+      if (!Main.brightnessManager.globalScale)
+        console.warn(`${TAG} brightnessManager has no globalScale yet (no backlight-capable monitor detected)`);
+    } else {
       new ScreenProxy(Gio.DBus.session, BUS_NAME, OBJECT_PATH, (proxy, error) => {
         if (error) {
-          console.error(`[brightness-scroller] D-Bus proxy failed: ${error.message}`);
+          console.warn(`${TAG} D-Bus proxy for ${BUS_NAME} failed: ${error.message}`);
           return;
         }
         if (this.settings) this._proxy = proxy;
@@ -67,6 +73,7 @@ export default class BrightnessScrollerExtension extends Extension {
     }
 
     this.scroll_binding = this.panel.connect("scroll-event", this._handle_scroll.bind(this));
+    console.log(`${TAG} scroll handler attached to Main.panel (id ${this.scroll_binding})`);
   }
 
   disable() {
@@ -77,20 +84,37 @@ export default class BrightnessScrollerExtension extends Extension {
     this.settings = null;
     this.panel = null;
     this._proxy = null;
-    this._scale = null;
+    console.log(`${TAG} disable()`);
+  }
+
+  // Looked up on every use: the manager recreates globalScale when monitors change.
+  get _scale() {
+    return this._useManager ? (Main.brightnessManager?.globalScale ?? null) : null;
   }
 
   // Returns current brightness as 0..1, or null if unavailable.
   _get_brightness() {
-    if (this._scale) return this._scale.value;
-    const b = this._proxy?.Brightness;
-    if (typeof b !== "number" || b < 0) return null; // -1 => no backlight
+    if (this._useManager) {
+      const scale = this._scale;
+      if (!scale) console.warn(`${TAG} no Main.brightnessManager.globalScale (no backlight-capable monitor?)`);
+      return scale ? scale.value : null;
+    }
+    if (!this._proxy) {
+      console.warn(`${TAG} D-Bus proxy not available`);
+      return null;
+    }
+    const b = this._proxy.Brightness;
+    if (typeof b !== "number" || b < 0) { // -1 => no backlight
+      console.warn(`${TAG} gsd reports no usable Brightness (${b})`);
+      return null;
+    }
     return b / 100;
   }
 
   _set_brightness(value) {
-    if (this._scale) {
-      this._scale.value = value;
+    if (this._useManager) {
+      const scale = this._scale;
+      if (scale) scale.value = value;
     } else if (this._proxy) {
       // D-Bus uses integer percent; floor is 5 (or 1) to match globalScale.
       this._proxy.Brightness = Math.clamp(Math.round(value * 100), Math.round(this.min_brightness * 100), 100);
@@ -98,7 +122,9 @@ export default class BrightnessScrollerExtension extends Extension {
   }
 
   _handle_scroll(_actor, event) {
+    console.log(`${TAG} scroll-event received (direction ${event.get_scroll_direction()}, state 0x${event.get_state().toString(16)})`);
     if (this.modifier_mask && (event.get_state() & this.modifier_mask) === 0) {
+      console.debug(`${TAG} scroll ignored: modifier not held`);
       return Clutter.EVENT_PROPAGATE;
     }
 
@@ -118,8 +144,15 @@ export default class BrightnessScrollerExtension extends Extension {
     }
 
     value = Math.clamp(value, this.min_brightness, 1);
-    this._set_brightness(value);
-    this._show_osd(value);
+    console.log(`${TAG} scroll -> brightness ${Math.round(value * 100)}%`);
+    try {
+      this._set_brightness(value);
+      // On 49+ the brightness manager shows its own per-monitor OSD when
+      // globalScale changes; showing ours too would double it.
+      if (!this._useManager) this._show_osd(value);
+    } catch (e) {
+      console.warn(`${TAG} failed to set brightness: ${e}`);
+    }
     return Clutter.EVENT_STOP;
   }
 
