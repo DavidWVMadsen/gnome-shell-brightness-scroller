@@ -12,6 +12,11 @@
       <summary>Invert Direction</summary>
       <description>Scrolling up decreases the brightness, scrolling down increases it.</description>
     </key>
+    <key name="allow-low-brightness" type="b">
+      <default>false</default>
+      <summary>Allow brightness down to 1%</summary>
+      <description>By default scrolling will not lower brightness below 5%. If enabled, the minimum is 1%.</description>
+    </key>
     <key name="modifier-key" type="s">
       <choices>
         <choice value="none" />

@@ -39,6 +39,10 @@ export default class BrightnessScrollerExtension extends Extension {
     const setModifier = () => {
       this.modifier_mask = ModifierMasks[this.settings.get_string("modifier-key")] ?? 0;
     };
+    const setMinimum = () => {
+      this.min_brightness = this.settings.get_boolean("allow-low-brightness") ? 0.01 : 0.05;
+    };
+    setMinimum();
     setGranularity();
     setDirection();
     setModifier();
@@ -46,6 +50,7 @@ export default class BrightnessScrollerExtension extends Extension {
       this.settings.connect("changed::granularity", setGranularity),
       this.settings.connect("changed::invert-scroll", setDirection),
       this.settings.connect("changed::modifier-key", setModifier),
+      this.settings.connect("changed::allow-low-brightness", setMinimum),
     ];
 
     // GNOME 48+: the shell owns brightness (Main.brightnessManager.globalScale).
@@ -87,7 +92,8 @@ export default class BrightnessScrollerExtension extends Extension {
     if (this._scale) {
       this._scale.value = value;
     } else if (this._proxy) {
-      this._proxy.Brightness = Math.round(value * 100);
+      // D-Bus uses integer percent; floor is 5 (or 1) to match globalScale.
+      this._proxy.Brightness = Math.clamp(Math.round(value * 100), Math.round(this.min_brightness * 100), 100);
     }
   }
 
@@ -111,7 +117,7 @@ export default class BrightnessScrollerExtension extends Extension {
         return Clutter.EVENT_PROPAGATE;
     }
 
-    value = Math.clamp(value, 0, 1);
+    value = Math.clamp(value, this.min_brightness, 1);
     this._set_brightness(value);
     this._show_osd(value);
     return Clutter.EVENT_STOP;

@@ -2,7 +2,7 @@
 
 Use the mouse wheel on the GNOME Top Bar to increase or decrease screen brightness, with GNOME's standard brightness on-screen display.
 
-Settings: step granularity (default 5%), invert scroll direction, and an optional required modifier key (Ctrl/Alt/Shift/Super).
+Settings: step granularity (default 5%), invert scroll direction, an optional required modifier key (Ctrl/Alt/Shift/Super), and a minimum-brightness floor: scrolling never goes below 5% by default, or 1% if "Allow brightness down to 1%" is enabled (very low brightness can make the screen hard to see).
 
 Brightness is controlled via `Main.brightnessManager.globalScale` when the shell provides it (GNOME 48+), otherwise via the `Brightness` property of gnome-settings-daemon's `org.gnome.SettingsDaemon.Power.Screen` D-Bus interface. Requires a backlight-controllable display.
 

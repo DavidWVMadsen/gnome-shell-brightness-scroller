@@ -19,6 +19,21 @@ export default class BrightnessScrollerExtensionPreferences extends ExtensionPre
     group.add(granularityRow);
     group.add(invertScrollRow);
 
+    // Allow very low brightness switch
+    const lowBrightnessRow = new Adw.ActionRow({
+      title: 'Allow brightness down to 1%',
+      subtitle: 'By default the minimum is 5%. Very low brightness can make the screen hard to see and navigate.',
+    });
+    const lowBrightnessSwitch = new Gtk.Switch({
+      active: window._settings.get_boolean('allow-low-brightness'),
+      valign: Gtk.Align.CENTER,
+      halign: Gtk.Align.CENTER,
+    });
+    window._settings.bind('allow-low-brightness', lowBrightnessSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
+    lowBrightnessRow.add_suffix(lowBrightnessSwitch);
+    lowBrightnessRow.activatable_widget = lowBrightnessSwitch;
+    group.add(lowBrightnessRow);
+
     // Create the modifier key dropdown
     const modifierKeys = ['none', 'ctrl', 'alt', 'shift', 'super'];
     const modifierRow = new Adw.ComboRow({
