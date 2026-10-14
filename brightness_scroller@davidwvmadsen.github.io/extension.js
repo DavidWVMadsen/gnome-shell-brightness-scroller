@@ -42,20 +42,23 @@ export default class BrightnessScrollerExtension extends Extension {
       this.modifier_mask = ModifierMasks[this.settings.get_string("modifier-key")] ?? 0;
     };
     const setMinimum = () => {
-      this.min_level = this.settings.get_boolean("allow-low-brightness") ? 0.01 : 0.05;
-      // Re-apply in case the floor was raised.
-      this._apply(this._get_level());
+      this.min_level = Math.clamp(this.settings.get_int("min-brightness"), 1, 90) / 100.0;
+      // Re-clamp the current level upward if the floor was raised.
+      const level = this._get_level();
+      if (this.settings.get_double("dim-level") < level)
+        this.settings.set_double("dim-level", level);
+      this._apply(level);
     };
     setGranularity();
     setDirection();
     setModifier();
-    this.min_level = this.settings.get_boolean("allow-low-brightness") ? 0.01 : 0.05;
+    this.min_level = Math.clamp(this.settings.get_int("min-brightness"), 1, 90) / 100.0;
 
     this._settingsIds = [
       this.settings.connect("changed::granularity", setGranularity),
       this.settings.connect("changed::invert-scroll", setDirection),
       this.settings.connect("changed::modifier-key", setModifier),
-      this.settings.connect("changed::allow-low-brightness", setMinimum),
+      this.settings.connect("changed::min-brightness", setMinimum),
     ];
 
     this._monitorsId = Main.layoutManager.connect("monitors-changed", () => this._rebuild_overlays());

@@ -12,10 +12,11 @@
       <summary>Invert Direction</summary>
       <description>Scrolling up decreases the brightness, scrolling down increases it.</description>
     </key>
-    <key name="allow-low-brightness" type="b">
-      <default>false</default>
-      <summary>Allow brightness down to 1%</summary>
-      <description>By default the dimming overlay will not lower brightness below 5%. If enabled, the minimum is 1%.</description>
+    <key name="min-brightness" type="i">
+      <range min="1" max="90" />
+      <default>5</default>
+      <summary>Minimum brightness</summary>
+      <description>Lowest brightness level in percent that scrolling can reach. Very low values can make the screen hard to see and navigate.</description>
     </key>
     <key name="dim-level" type="d">
       <range min="0.01" max="1.0" />

@@ -2,7 +2,7 @@
 
 Use the mouse wheel on the GNOME Top Bar to increase or decrease screen brightness, with GNOME's standard brightness on-screen display.
 
-Settings: step granularity (default 5%), invert scroll direction, an optional required modifier key (Ctrl/Alt/Shift/Super), and a minimum-brightness floor: scrolling never goes below 5% by default, or 1% if "Allow brightness down to 1%" is enabled (very low brightness can make the screen hard to see).
+Settings: step granularity (default 5%), invert scroll direction, an optional required modifier key (Ctrl/Alt/Shift/Super), and a configurable minimum brightness (1–90%, default 5%) that scrolling never goes below (very low values can make the screen hard to see and navigate).
 
 This extension dims in software: it draws a black, click-through overlay on every monitor, with opacity `(1 - level)`. It does not touch the hardware backlight, so it works on any display, including external monitors, but it does not save power. The level is stored in the `dim-level` setting, so it survives re-login and lock. At 100% the overlay is hidden.
 
