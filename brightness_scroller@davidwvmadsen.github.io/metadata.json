@@ -1,10 +1,15 @@
 {
   "name": "Brightness Scroller",
-  "original-author": "francislavoie",
   "description": "Scroll up or down in the Top Bar to dim or brighten the screen (software overlay, works on any monitor). Supports configuring granularity (default step of 5%) and optionally requiring a modifier key (Ctrl/Alt/Shift/Super) to be held while scrolling.\n\nDerived from Volume Scroller (https://github.com/francislavoie/gnome-shell-volume-scroller).",
-  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48",
+    "49",
+    "50"
+  ],
   "url": "https://github.com/DavidWVMadsen/gnome-shell-brightness-scroller",
   "uuid": "brightness_scroller@davidwvmadsen.github.io",
-  "settings-schema": "org.gnome.shell.extensions.brightness-scroller",
-  "version": 1
+  "settings-schema": "org.gnome.shell.extensions.brightness-scroller"
 }

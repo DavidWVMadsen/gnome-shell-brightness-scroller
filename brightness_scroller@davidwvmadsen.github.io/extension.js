@@ -65,7 +65,6 @@ export default class BrightnessScrollerExtension extends Extension {
     this._rebuild_overlays();
 
     this.scroll_binding = Main.panel.connect("scroll-event", this._handle_scroll.bind(this));
-    console.log(`${TAG} enable(): GNOME ${Config.PACKAGE_VERSION}, overlay dimming, level=${Math.round(this._get_level() * 100)}%`);
   }
 
   disable() {
@@ -78,7 +77,6 @@ export default class BrightnessScrollerExtension extends Extension {
     this._settingsIds?.forEach((id) => this.settings.disconnect(id));
     this._settingsIds = null;
     this.settings = null;
-    console.log(`${TAG} disable()`);
   }
 
   _get_level() {
